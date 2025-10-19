@@ -8,29 +8,12 @@ import SwiftUI
 import SwiftData
 import UniformTypeIdentifiers
 
-struct Note: Identifiable, Codable, Hashable {
-    let id: UUID
-    var title: String
-    var content: String
-    var createdAt: Date
-
-    init(id: UUID = UUID(), title: String = "", content: String = "", createdAt: Date = Date()) {
-        self.id = id
-        self.title = title
-        self.content = content
-        self.createdAt = createdAt
-    }
-}
-
 struct ContentView: View {
     @State private var notes: [Note] = []
     @State private var selectedNote: Note? = nil
     @State private var isPresentingNewNote = false
     @State private var isPresentingSettings = false
-
-    init() {
-        loadNotes()
-    }
+    @State private var didLoad = false
 
     var body: some View {
         NavigationSplitView {
@@ -70,6 +53,9 @@ struct ContentView: View {
                     export(note: note)
                     saveNotes()
                 })
+                .onDisappear {
+                    saveNotes()
+                }
             } else {
                 Text("Wähle eine Notiz aus")
                     .foregroundStyle(.secondary)
@@ -103,6 +89,15 @@ struct ContentView: View {
                             }
                         }
                     }
+            }
+        }
+        .onChange(of: notes) { _ in
+            saveNotes()
+        }
+        .onAppear {
+            if !didLoad {
+                loadNotes()
+                didLoad = true
             }
         }
     }
@@ -140,16 +135,11 @@ struct ContentView: View {
     }
 
     private func saveNotes() {
-        if let encoded = try? JSONEncoder().encode(notes) {
-            UserDefaults.standard.set(encoded, forKey: "savedNotes")
-        }
+        NoteStore.shared.save(notes)
     }
 
     private func loadNotes() {
-        if let data = UserDefaults.standard.data(forKey: "savedNotes"),
-           let decoded = try? JSONDecoder().decode([Note].self, from: data) {
-            notes = decoded
-        }
+        notes = NoteStore.shared.load()
     }
 }
 
