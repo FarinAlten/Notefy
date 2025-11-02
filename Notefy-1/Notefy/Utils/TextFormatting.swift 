@@ -1,0 +1,22 @@
+import Foundation
+
+struct TextFormatting {
+    
+    static func formatTitle(_ title: String) -> String {
+        return title.trimmingCharacters(in: .whitespacesAndNewlines).capitalized
+    }
+    
+    static func formatContent(_ content: String) -> String {
+        return content.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    
+    static func applyMarkdownFormatting(to text: String) -> NSAttributedString {
+        let data = Data(text.utf8)
+        let options: [NSAttributedString.DocumentReadingOptionKey: Any] = [
+            .documentType: NSAttributedString.DocumentType.markdown,
+            .characterEncoding: String.Encoding.utf8.rawValue
+        ]
+        
+        return (try? NSAttributedString(data: data, options: options, documentAttributes: nil)) ?? NSAttributedString(string: text)
+    }
+}
