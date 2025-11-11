@@ -1,6 +1,6 @@
 import Foundation
 
-final class NoteStore {
+actor NoteStore {
     static let shared = NoteStore()
     private init() {}
 
@@ -13,8 +13,8 @@ final class NoteStore {
         return dir.appendingPathComponent(fileName)
     }
 
-    // Save notes to disk as JSON
-    func save(_ notes: [Note]) {
+    // Save notes to disk as JSON (off the main thread, serialized by the actor)
+    func save(_ notes: [Note]) async {
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted]
@@ -28,8 +28,8 @@ final class NoteStore {
         }
     }
 
-    // Load notes from disk, or return empty array if unavailable
-    func load() -> [Note] {
+    // Load notes from disk, or return empty array if unavailable (off the main thread)
+    func load() async -> [Note] {
         do {
             let url = fileURL
             guard FileManager.default.fileExists(atPath: url.path) else {
