@@ -1,50 +1,54 @@
+// NoteStore.swift
+// Notefy
+//
+// Persists notes as JSON in the app's Documents directory using Swift Concurrency.
+
 import Foundation
 
 actor NoteStore {
     static let shared = NoteStore()
-    private init() {}
 
     private let fileName = "notes.json"
 
-    // Location for storing notes
+    private var cachedNotes: [Note]? = nil
+
     private var fileURL: URL {
-        let urls = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
-        let dir = urls.first ?? URL(fileURLWithPath: NSTemporaryDirectory())
-        return dir.appendingPathComponent(fileName)
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        return docs.appendingPathComponent(fileName)
     }
 
-    // Save notes to disk as JSON (off the main thread, serialized by the actor)
-    func save(_ notes: [Note]) async {
-        do {
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted]
-            encoder.dateEncodingStrategy = .iso8601
-            let data = try encoder.encode(notes)
-            try data.write(to: fileURL, options: [.atomic])
-        } catch {
-            #if DEBUG
-            print("NoteStore save error:", error)
-            #endif
-        }
-    }
-
-    // Load notes from disk, or return empty array if unavailable (off the main thread)
     func load() async -> [Note] {
+        // Serve from cache if available
+        if let cached = cachedNotes {
+            return cached
+        }
+
         do {
             let url = fileURL
             guard FileManager.default.fileExists(atPath: url.path) else {
+                cachedNotes = []
                 return []
             }
+
             let data = try Data(contentsOf: url)
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            let notes = try decoder.decode([Note].self, from: data)
+            let notes = try JSONDecoder().decode([Note].self, from: data)
+            cachedNotes = notes
             return notes
         } catch {
-            #if DEBUG
-            print("NoteStore load error:", error)
-            #endif
+            // If decoding fails, return empty and do not crash
+            cachedNotes = []
             return []
+        }
+    }
+
+    func save(_ notes: [Note]) async {
+        do {
+            let data = try JSONEncoder().encode(notes)
+            try data.write(to: fileURL, options: [.atomic])
+            cachedNotes = notes
+        } catch {
+            // You might want to log this in production
+            // print("Failed to save notes: \(error)")
         }
     }
 }

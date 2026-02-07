@@ -49,8 +49,8 @@ enum HomeLayout: String, CaseIterable, Codable, Identifiable {
 
     var localizedName: String {
         switch self {
-        case .list: return "Liste"
-        case .gallery: return "Galerie"
+        case .list: return "List"
+        case .gallery: return "Gallery"
         }
     }
 
@@ -91,6 +91,12 @@ struct ContentView: View {
     // Edit mode environment
     @Environment(\.editMode) private var editMode
 
+    // Added for gallery matched geometry and peek/open states
+    @Namespace private var galleryNamespace
+    @State private var openingNoteID: UUID? = nil
+    @State private var peekNoteID: UUID? = nil
+    @State private var showEditorOverlay: Bool = false
+
     var accentColor: Color { colorForKey(accentColorKey) }
 
     var body: some View {
@@ -107,11 +113,35 @@ struct ContentView: View {
                     }
                 }
 
+                if peekNoteID != nil {
+                    Color.black.opacity(0.03)
+                        .ignoresSafeArea()
+                        .transition(.opacity)
+                        .allowsHitTesting(false)
+                }
+
+                // Overlay editor when showEditorOverlay is true and note is found
+                if let openID = openingNoteID, let note = notes.first(where: { $0.id == openID }), showEditorOverlay {
+                    NoteEditor(
+                        note: Binding(get: { note }, set: { updated in
+                            if let idx = notes.firstIndex(where: { $0.id == openID }) { notes[idx] = updated }
+                        }),
+                        onExportRequest: { format in
+                            share(note: note, as: format)
+                        }, accentColor: accentColor
+                    )
+                    .background(Color.black.opacity(0.05).ignoresSafeArea())
+                    .transition(.identity)
+                }
+
                 // FAB nur anzeigen, wenn nicht im Editiermodus
                 if editMode?.wrappedValue != .active {
                     floatingAddButton
+                        .transition(.scale.combined(with: .opacity))
                 }
             }
+            .animation(.spring(response: 0.35, dampingFraction: 0.85, blendDuration: 0.2), value: editMode?.wrappedValue)
+            .animation(.easeInOut(duration: 0.25), value: homeLayoutRaw)
             .settingsSheet(isPresented: $isPresentingSettings)
             .shareSheet(isPresented: $isPresentingShare, items: shareItems)
             .navigationDestination(for: Note.self) { note in
@@ -153,6 +183,7 @@ struct ContentView: View {
                         Text("\(selection.count) ausgewählt")
                             .foregroundStyle(.secondary)
                             .font(.subheadline)
+                            .animation(.easeInOut(duration: 0.2), value: selection)
                     }
                 }
             }
@@ -173,6 +204,7 @@ struct ContentView: View {
                         NavigationLink(value: note) {
                             NoteCard(note: note)
                         }
+                        .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity))
                         .contextMenu {
                             Button {
                                 share(note: note, as: .markdown)
@@ -203,6 +235,7 @@ struct ContentView: View {
                     }
                     .onDelete(perform: delete(at:))
                 }
+                .animation(.spring(response: 0.35, dampingFraction: 0.9), value: notes)
             }
         }
         .listStyle(.insetGrouped)
@@ -227,35 +260,59 @@ struct ContentView: View {
                 let columns = [GridItem(.adaptive(minimum: 160), spacing: 12)]
                 LazyVGrid(columns: columns, spacing: 12) {
                     ForEach(notes) { note in
-                        GalleryCard(
-                            note: note,
-                            selected: selection.contains(note.id),
-                            accentColor: accentColor,
-                            isEditing: editMode?.wrappedValue == .active
-                        )
+                        ZStack {
+                            GalleryCard(
+                                note: note,
+                                selected: selection.contains(note.id),
+                                accentColor: accentColor,
+                                isEditing: editMode?.wrappedValue == .active
+                            )
+                            .transition(.scale.combined(with: .opacity))
+                            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: selection)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .fill(Color.clear)
+                                    .matchedGeometryEffect(id: "card-bg-\(note.id)", in: galleryNamespace)
+                                    .allowsHitTesting(false)
+                            )
+                        }
+                        .contentShape(Rectangle())
                         .onTapGesture {
-                            if editMode?.wrappedValue == .active {
-                                toggleSelection(for: note.id)
-                            } else {
-                                path.append(note)
+                            withAnimation(.spring(response: 0.5, dampingFraction: 0.88)) {
+                                if editMode?.wrappedValue == .active {
+                                    toggleSelection(for: note.id)
+                                } else {
+                                    openingNoteID = note.id
+                                    showEditorOverlay = true
+                                    path.append(note)
+                                }
                             }
                         }
-                        .contextMenu {
-                            Button {
-                                share(note: note, as: .markdown)
-                            } label: {
-                                Label("Share", systemImage: "square.and.arrow.up")
+                        .simultaneousGesture(
+                            LongPressGesture(minimumDuration: 0.25)
+                                .onChanged { _ in
+                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { peekNoteID = note.id }
+                                }
+                                .onEnded { _ in
+                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { peekNoteID = nil }
+                                }
+                        )
+                        .overlay(
+                            Group {
+                                if peekNoteID == note.id {
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .stroke(accentColor.opacity(0.6), lineWidth: 2)
+                                        .shadow(color: accentColor.opacity(0.25), radius: 10)
+                                        .scaleEffect(1.02)
+                                        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: peekNoteID)
+                                }
                             }
-                            Button(role: .destructive) {
-                                delete(note: note)
-                            } label: {
-                                Label("Delete", systemImage: "trash")
-                            }
-                        }
+                        )
                     }
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
+                .animation(.spring(response: 0.35, dampingFraction: 0.88), value: notes)
             }
         }
         .refreshable {
@@ -264,6 +321,9 @@ struct ContentView: View {
         .onChange(of: editMode?.wrappedValue) { newMode in
             if newMode != .active {
                 selection.removeAll()
+            }
+            withAnimation {
+                peekNoteID = nil
             }
         }
     }
@@ -307,11 +367,16 @@ struct ContentView: View {
             NoteEditor(
                 note: $notes[idx],
                 onExportRequest: { format in
+                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
                     share(note: notes[idx], as: format)
                 }, accentColor: accentColor
             )
             .onDisappear {
                 scheduleSave()
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.9)) {
+                    showEditorOverlay = false
+                    openingNoteID = nil
+                }
             }
         } else {
             Text("Note not found")
@@ -337,10 +402,12 @@ struct ContentView: View {
     // MARK: - Actions
 
     private func createNewNote() {
-        let newNote = Note(title: "New note", content: "")
-        notes.insert(newNote, at: 0)
-        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-        path.append(newNote)
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+            let newNote = Note(title: "New note", content: "")
+            notes.insert(newNote, at: 0)
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            path.append(newNote)
+        }
     }
 
     private func delete(note: Note) {
@@ -438,6 +505,7 @@ struct NoteCard: View {
                     .font(.headline)
                     .foregroundStyle(.primary)
                     .lineLimit(1)
+                    .animation(.easeInOut(duration: 0.2), value: note.title)
                 Spacer()
                 Text(note.createdAt, style: .date)
                     .font(.caption)
@@ -448,6 +516,7 @@ struct NoteCard: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
+                    .animation(.easeInOut(duration: 0.2), value: note.content)
             }
         }
         .padding(14)
@@ -457,6 +526,9 @@ struct NoteCard: View {
                 .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 4)
         )
         .contentShape(Rectangle())
+        #if canImport(UIKit)
+        .hoverEffect(.highlight)
+        #endif
     }
 }
 
@@ -501,6 +573,7 @@ fileprivate struct GalleryCard: View {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .stroke(selected ? accentColor : Color.clear, lineWidth: 2)
             )
+            .shadow(color: selected ? accentColor.opacity(0.35) : .clear, radius: selected ? 10 : 0)
 
             if isEditing {
                 Circle()
@@ -513,8 +586,10 @@ fileprivate struct GalleryCard: View {
                     )
                     .padding(8)
                     .accessibilityHidden(true)
+                    .transition(.scale.combined(with: .opacity))
             }
         }
+        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: selected)
     }
 }
 
@@ -531,56 +606,82 @@ struct NoteEditor: View {
     var accentColor: Color
 
     @Environment(\.dismiss) private var dismiss
+    @FocusState private var focusedField: Field?
+    @State private var keyboardHeight: CGFloat = 0
+
+    enum Field {
+        case title
+        case content
+    }
 
     var body: some View {
-        VStack(spacing: 0) {
-            Form {
-                Section {
-                    TextField("Title", text: $note.title)
-                        .font(.title3.weight(.semibold))
+        ZStack(alignment: .bottom) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    // Titel frei, ohne Rahmen – wie in Notes
+                    TextField("Title", text: $note.title, axis: .vertical)
+                        .font(.system(.title2, design: .default).weight(.semibold))
+                        .focused($focusedField, equals: .title)
                         .textInputAutocapitalization(.sentences)
                         .disableAutocorrection(false)
-                }
-                Section {
+                        .padding(.horizontal, 16)
+                        .padding(.top, 14)
+                        .transaction { transaction in
+                            transaction.animation = .easeInOut(duration: 0.2)
+                        }
+
+                    // Content frei – RichTextView ohne Rahmen, auf volle Breite
                     RichTextView(text: $note.content, action: $pendingAction)
                         .frame(minHeight: 240, maxHeight: .infinity, alignment: .topLeading)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .strokeBorder(Color.secondary.opacity(0.15))
-                        )
-                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                } header: {
-                    Text("Content")
-                }
-            }
-            .scrollDismissesKeyboard(.interactively)
-
-            HStack(alignment: .center, spacing: 12) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    FormattingToolbar { action in
-                        pendingAction = action
-                    }
-                    .padding(.vertical, 2)
+                        .background(Color.clear)
+                        .focused($focusedField, equals: .content)
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 80) // Platz für die schwebende Toolbar
+                        .transaction { transaction in
+                            transaction.animation = .easeInOut(duration: 0.2)
+                        }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .background(Color(.systemGroupedBackground))
+            .scrollDismissesKeyboard(.interactively)
 
+            // Schwebende Formatting Toolbar mit Liquid Glass über der Tastatur
+            FloatingFormattingBar(
+                accentColor: accentColor,
+                onAction: { pendingAction = $0 },
+                onShareMarkdown: {
+                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                    onExportRequest(.markdown)
+                },
+                onSharePlain: {
+                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                    onExportRequest(.plainText)
+                }
+            )
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .animation(.spring(response: 0.35, dampingFraction: 0.9), value: focusedField)
+        }
+        .navigationTitle("Note")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
                 Menu {
                     Button {
+                        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
                         onExportRequest(.markdown)
                     } label: {
                         Label("Markdown (.md)", systemImage: "doc")
                     }
                     Button {
+                        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
                         onExportRequest(.plainText)
                     } label: {
                         Label("Plain Text (.txt)", systemImage: "doc.plaintext")
                     }
                 } label: {
-                    Label("Share", systemImage: "square.and.arrow.up")
-                        .font(.body.weight(.semibold))
+                    Image(systemName: "square.and.arrow.up")
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(accentColor)
 
                 Button {
                     dismiss()
@@ -588,14 +689,84 @@ struct NoteEditor: View {
                     Text("Done")
                         .font(.body.weight(.semibold))
                 }
-                .buttonStyle(.bordered)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(.ultraThinMaterial)
         }
-        .navigationTitle("Note")
-        .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: focusedField) { new in
+            if new == .content {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
+        }
+    }
+}
+
+// MARK: - Floating Formatting Bar
+
+fileprivate struct FloatingFormattingBar: View {
+    var accentColor: Color
+    var onAction: (RichTextAction) -> Void
+    var onShareMarkdown: () -> Void
+    var onSharePlain: () -> Void
+
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var keyboardPresented = false
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                formattingButtons
+
+                Spacer(minLength: 8)
+
+                Menu {
+                    Button {
+                        onShareMarkdown()
+                    } label: {
+                        Label("Markdown (.md)", systemImage: "doc")
+                    }
+                    Button {
+                        onSharePlain()
+                    } label: {
+                        Label("Plain Text (.txt)", systemImage: "doc.plaintext")
+                    }
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.body.weight(.semibold))
+                }
+                .tint(accentColor)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 10)
+            .background(.ultraThinMaterial, in: Capsule())
+            .shadow(color: .black.opacity(colorScheme == .dark ? 0.4 : 0.15), radius: 12, x: 0, y: 6)
+            .overlay(
+                Capsule()
+                    .stroke(
+                        LinearGradient(colors: [accentColor.opacity(0.25), Color.clear], startPoint: .leading, endPoint: .trailing),
+                        lineWidth: 1
+                    )
+            )
+            .compositingGroup()
+            .padding(.bottom, 4)
+            .ignoresSafeArea(.keyboard, edges: .bottom)
+            .animation(.spring(response: 0.35, dampingFraction: 0.9), value: accentColor)
+            .tint(accentColor)
+        }
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+
+    private var formattingButtons: some View {
+        HStack(spacing: 6) {
+            Button { onAction(.bold) } label: { Image(systemName: "bold") }
+            Button { onAction(.italic) } label: { Image(systemName: "italic") }
+            Button { onAction(.strikethrough) } label: { Image(systemName: "strikethrough") }
+            Divider().frame(height: 18).opacity(0.25)
+            Button { onAction(.heading1) } label: { Image(systemName: "textformat.size.larger") }
+            Button { onAction(.quote) } label: { Image(systemName: "text.quote") }
+            Button { onAction(.bullet) } label: { Image(systemName: "list.bullet") }
+        }
+        .buttonStyle(.bordered)
+        .labelStyle(.iconOnly)
+        .tint(accentColor)
     }
 }
 
@@ -632,12 +803,12 @@ struct RichTextView: UIViewRepresentable {
         textView.isEditable = true
         textView.isScrollEnabled = true
         textView.font = UIFont.preferredFont(forTextStyle: .body)
-        textView.backgroundColor = UIColor.secondarySystemGroupedBackground
-        textView.layer.cornerRadius = 12
-        textView.textContainerInset = UIEdgeInsets(top: 12, left: 10, bottom: 12, right: 10)
+        textView.backgroundColor = .clear
+        textView.textContainerInset = UIEdgeInsets(top: 8, left: 6, bottom: 8, right: 6)
         textView.delegate = context.coordinator
         textView.allowsEditingTextAttributes = false
         textView.tintColor = .label
+        textView.keyboardDismissMode = .interactive
         return textView
     }
 
@@ -964,22 +1135,21 @@ struct SettingsView: View {
             Section(header: Text("General")) {
                 HStack {
                     Image(systemName: "app.badge.fill")
-                        .foregroundStyle(.indigo)
+                        .tint(.white)
                     VStack(alignment: .leading) {
                         Text("Notefy")
                         Text("Version 0.1")
                             .font(.footnote)
-                            .foregroundStyle(.secondary)
                             
                     }
-                    .tint(.accentColor)
+                    .tint(.white)
                 }
                 HStack {
                     Image(systemName: "person.crop.circle")
                         .tint(.accentColor)
-                    Text("Created by Farin")
+                    Text("Created by Farin Altenhöner")
+                        .tint(.white)
                 }
-                .tint(.accentColor)
             }
             Section("Personalization") {
                 NavigationLink {
@@ -987,12 +1157,14 @@ struct SettingsView: View {
                 } label: {
                     HStack {
                         Label("Accent Color", systemImage: "paintpalette")
+                            .tint(.white)
                         Spacer()
                         Circle()
                             .fill(colorForKey(accentColorKey))
                             .frame(width: 20, height: 20)
                         Text(nameForKey(accentColorKey))
                             .foregroundStyle(.secondary)
+                            .tint(.white)
                     }
                 }
 
@@ -1005,7 +1177,7 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
                 .padding(.vertical, 4)
             }
-            Section("What’s New") {
+            Section("Release Notes") {
                 NavigationLink {
                     WhatsNewView()
                 } label: {
@@ -1015,9 +1187,11 @@ struct SettingsView: View {
             Section("About me") {
                 Link(destination: URL(string: "https://farinalten.com")!) {
                     Label("Website", systemImage: "globe")
+                        .tint(.white)
                 }
                 Link(destination: URL(string: "https://farinalten.com/websites/legal")!) {
                     Label("Support", systemImage: "envelope")
+                        .tint(.white)
                 }
             }
         }
@@ -1399,3 +1573,4 @@ struct NotefyApp: App {
         }
     }
 }
+
