@@ -24,19 +24,3 @@ struct RootAppView: View {
     }
 }
 
-// Dummy placeholders for compilation
-
-struct ContentView: View {
-    var body: some View {
-        Text("Content View")
-    }
-}
-
-struct SplashView: View {
-    var body: some View {
-        Text("Splash View")
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.blue)
-            .foregroundColor(.white)
-    }
-}
